@@ -145,26 +145,6 @@ node tests/plugin-harness.js
 
 ---
 
-## 脱敏
-
-本仓库不含任何本机身份信息，可以直接公开：
-
-| 检查项 | 结果 |
-|---|---|
-| 含用户名的绝对路径（macOS / Linux / Windows 的 home 前缀） | 无 —— 安装与自检命令全部用 `$HOME` / `$PET_HOME` / `process.env.HOME` / 占位路径 |
-| 本机用户名、主机名 | 无 |
-| 邮箱地址 | 无（`package.json` 没有 `author` 字段） |
-| API Key、访问令牌、私钥、手机号 | 无 |
-| 硬编码的内网/VPN 地址 | 无（只有 `127.0.0.1` 这种回环地址） |
-| Git 身份 | 本目录**不是** git 仓库，没有 `.git`，因此不带任何提交者信息 |
-
-而且这条防线是**自动**，不是靠人眼：`tests/plugin-harness.js` 里有一组"脱敏守卫"断言，每次跑自检都会重新扫描实际交付的文件（`package.json`、`README.md`、`lib/index.js`、`lib/client.js`），一旦有人把本机路径、用户名、主机名、邮箱、令牌形态或私钥块写回去，自检立刻变红。守卫用的是运行时的 `os.userInfo()` / `os.hostname()`，所以它在谁的机器上跑，就守谁的信息。
-
-> 关于浏览器里的隐私：API Key 之类的东西从来不经过这个插件 —— 它不读也不写任何凭据，只往 `localStorage` 写两个自己的键（`dsh-plugin-whale-overlay:position`、`dsh-plugin-whale-overlay:form`），清掉的方法见上面的卸载一节。
-
-
----
-
 ## 可调项
 
 常量都在 `lib/client.js` 顶部的 `tuning` 一段，改完保存即可（已装好的话浏览器会自动热重载）：

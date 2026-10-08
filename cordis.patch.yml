@@ -1,0 +1,19 @@
+# dsh-plugin-whale-overlay — bundle patch layer.
+#
+# This file is what makes the package a DSH bundle: `dsh.bundle.patch` in
+# package.json points here, `dsh plugin --profile <name> add <this package>`
+# appends the package to that profile's `dsh.profile.bundles`, and the loader
+# applies this layer after the surface bundles (dsh-base, dsh-web-app) and
+# before the profile's own cordis.patch.yml.
+#
+# A top-level YAML array of loader patch entries. This bundle adds exactly one
+# row — the host half of the pet — and touches nothing else: no product row is
+# retargeted, overridden, or disabled, which is what keeps the plugin additive.
+#
+# The row's `name` is the package name, because that is how the loader resolves
+# it (from the profile's node_modules) and how @deepseek-ai/dsh-client-modules
+# recognises the package's `dsh.client` browser half: it scans enabled entries
+# whose name equals a package that declares `dsh.client`.
+- insert:
+    - id: whale-pet
+      name: dsh-plugin-whale-overlay

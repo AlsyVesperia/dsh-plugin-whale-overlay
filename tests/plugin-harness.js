@@ -862,7 +862,7 @@ check('a session id with no summary yet is handled', imageOf(nestedSessionPet.fi
 const escapeRegExp = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 
 /** Everything a stranger receives or reads: the code, the package manifest, the docs. */
-const SHIPPED_TEXT_FILES = ['package.json', 'README.md', 'lib/index.js', 'lib/client.js']
+const SHIPPED_TEXT_FILES = ['package.json', 'README.md', 'lib/index.js', 'lib/client.js', 'cordis.patch.yml']
 
 const currentUser = userInfo().username
 const currentHost = hostname().split('.')[0]
@@ -905,7 +905,69 @@ for (const [label, pattern] of IDENTITY_CHECKS) {
 }
 
 check('package.json declares no author/contributors (nothing to scrub later)', pkg.author === undefined && pkg.contributors === undefined)
-check('the plugin folder carries no .git (no committer identity travels with it)', existsSync(join(ROOT, '.git')) === false)
+// This package is a published git repository, so a .git directory is expected —
+// what must not travel with it is a personal address: once pushed, a commit's
+// author is permanent. The rule is therefore about the identity, not the folder.
+// (An absent .git — a source tarball, an npm install — satisfies it trivially.)
+const gitConfigPath = join(ROOT, '.git', 'config')
+const gitConfigText = existsSync(gitConfigPath) ? readText('.git', 'config') : ''
+const configuredEmail = (gitConfigText.match(/^\s*email\s*=\s*(\S+)/m) ?? [])[1]
+check('any git identity configured here is a GitHub noreply address', configuredEmail === undefined || configuredEmail.endsWith('@users.noreply.github.com'), String(configuredEmail))
+
+// ─────────────────── bundle manifest (dsh.bundle) ───────────────────
+
+/**
+ * The manifest that lets DSH manage this package as a plugin at all. Without
+ * `dsh.bundle.patch`, installing it makes it a plain dependency and the profile
+ * loader refuses it with "declares no dsh.bundle in its package.json" (in the
+ * Chinese UI: "这个包没有声明组合包"). The patch it points at is the layer that
+ * mounts the host half; the browser half travels separately via `dsh.client`.
+ */
+const bundlePatchRel = pkg.dsh?.bundle?.patch
+check('package.json declares dsh.bundle.patch (the official bundle manifest field)', typeof bundlePatchRel === 'string' && bundlePatchRel.length > 0, String(bundlePatchRel))
+check('the declared patch path is package-relative and exists on disk', typeof bundlePatchRel === 'string' && statSync(join(ROOT, bundlePatchRel)).isFile(), String(bundlePatchRel))
+check('the patch ships with the package (listed in files)', Array.isArray(pkg.files) && pkg.files.includes(String(bundlePatchRel).replace(/^\.\//, '')), JSON.stringify(pkg.files))
+check('the package is a bundle, not a profile (no dsh.profile)', pkg.dsh?.profile === undefined)
+check('the bundle manifest does not displace the dsh.client declaration', pkg.dsh?.client?.platform === 'web')
+
+const patchText = readText(String(bundlePatchRel).replace(/^\.\//, ''))
+
+/**
+ * A reader for exactly this file's shape. A real YAML parser would be a
+ * dependency; parsing by hand is also what makes an unexpected construct throw
+ * here instead of being skipped silently.
+ */
+function parseInsertedRows(text) {
+  const rows = []
+  let current = null
+  for (const raw of text.split('\n')) {
+    const line = raw.replace(/(^|\s)#.*$/, '')
+    if (line.trim() === '') continue
+    if (/^- insert:\s*$/.test(line)) continue
+    const id = line.match(/^ {4}- id:\s*(\S+)\s*$/)
+    if (id !== null) {
+      current = { id: id[1], name: undefined }
+      rows.push(current)
+      continue
+    }
+    const name = line.match(/^ {6}name:\s*(\S+)\s*$/)
+    if (name !== null && current !== null) {
+      current.name = name[1]
+      continue
+    }
+    throw new Error(`bundle patch has a line this check does not understand: ${JSON.stringify(raw)}`)
+  }
+  return rows
+}
+
+const insertedRows = parseInsertedRows(patchText)
+check('the patch is a single top-level insert entry', (patchText.match(/^- /gm) ?? []).length === 1 && /^- insert:\s*$/m.test(patchText))
+check('the patch never retargets a product row (no top-level id)', /^- id:/m.test(patchText) === false)
+check('the patch never disables anything', /disabled\s*:/.test(patchText) === false)
+check('the patch names exactly one module', (patchText.match(/^\s+name:/gm) ?? []).length === 1)
+check('the patch inserts exactly one row', insertedRows.length === 1, JSON.stringify(insertedRows))
+check('the inserted row resolves by the installed package name', insertedRows[0]?.name === pkg.name, `${insertedRows[0]?.name} vs ${pkg.name}`)
+check('the inserted row declares an id', typeof insertedRows[0]?.id === 'string' && insertedRows[0].id.length > 0, String(insertedRows[0]?.id))
 
 // ─────────────────────────── verdict ───────────────────────────
 

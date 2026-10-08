@@ -37,50 +37,49 @@
 
 ```
 dsh-plugin-whale-overlay/
+├── package.json      # dsh.bundle.patch → 本包是一个 DSH bundle；dsh.client → 浏览器半
+├── cordis.patch.yml  # bundle 的 patch 层：只 insert 一行，把 host 半挂进 profile
 ├── lib/
 │   ├── index.js      # host 半：注册一条 /dsh-plugin-whale-overlay/assets 静态素材路由
 │   └── client.js     # client 半：手写的 __ModuleLoader__ bundle，往 shell.overlay 注册桌宠
 ├── assets/           # 8 张图（whale_idle/walk/drag + 人形 idle/blink/walk/drag）
 └── tests/
-    ├── plugin-harness.js           # 离线自检：153 条断言
+    ├── plugin-harness.js           # 离线自检：165 条断言
     └── fixtures/outside-asset.png  # 目录穿越测试的诱饵文件
 ```
 
-两个设计要点：
+三个设计要点：
 
 1. **为什么有 host 半？** 浏览器端的插件 bundle 必须是**单文件**（模块表只解析平台种子、shell 自身模块、以及已注册的 bundle），所以素材没法 require 进来 —— 要么把 1MB 图片 base64 塞进 bundle，要么由 host 开一条静态路由。这里选了后者。
 2. **为什么挂在 `shell.overlay`？** 那是 AppFrame 的整屏浮层（`list` 类型、root 作用域、click-through），并且按契约会给入住者发 `useSessions` / `useWorkspaces` —— 正好是桌宠需要的会话状态来源。
+3. **为什么是 bundle？** `dsh.bundle.patch` 是官方让一个包成为 profile patch 层的声明方式（`dsh-base` / `dsh-web-app` / `dsh-headless` 三个内置组合包都这么写）。没有它，`dsh plugin` 只会把它当成普通依赖装进去，profile 组合时会直接报错「declares no dsh.bundle」。本包的 patch 只 **add**，不碰任何官方行。
 
 ---
 
 ## 安装
 
-> ⚠️ **需要重启一次 `dsh` 进程**：浏览器插件的花名册（`window.__DSH_BOOT__`）是启动时扫描出来的，所以新增插件必须重启才能生效。重启不会丢会话历史。
-> 装好之后的后续改动**不需要再重启**（client-hmr 会监视 bundle 变化并热重载）。
+本包是一个 **DSH bundle**：`package.json` 的 `dsh.bundle.patch` 指向 `cordis.patch.yml`，所以 `dsh plugin` 能把它当作 profile 的一层来管理 —— 你不需要手改任何 YAML。
+
+> ⚠️ **首次安装后需要重启一次 `dsh` 进程**：浏览器插件的花名册（`window.__DSH_BOOT__`）是启动时扫描出来的，所以新增插件必须重启才生效。重启不会丢会话历史。
+> 装好之后改代码**不需要再重启**（client-hmr 会监视 bundle 变化并热重载）。
 
 ```bash
-# 0) 先把本仓库放在任意位置，然后记进 $PET_HOME
-#    （下面全程用变量，命令里不写死任何本机路径）
-PET_HOME="$HOME/Desktop/dsh-plugin-whale-overlay"     # ← 改成你实际放这个文件夹的位置
+# 0) dsh plugin 是 pnpm 的转发器，先确保 pnpm 可用（二选一）
+corepack enable pnpm          # Node 自带 corepack 的机器
+npm i -g pnpm                 # 或者直接装
 
-# 1) 让 web profile 能按名字解析到这个包（本机没装 pnpm，所以直接建软链）
-mkdir -p ~/.dsh/profiles/web/node_modules
-ln -sfn "$PET_HOME" ~/.dsh/profiles/web/node_modules/dsh-plugin-whale-overlay
+# 1) 装进 web profile（会自动把本包追加进该 profile 的 dsh.profile.bundles）
+dsh plugin --profile web add github:AlsyVesperia/dsh-plugin-whale-overlay
 
-# 2) 在 profile 的 patch 层插入一行插件
-#    ~/.dsh/profiles/web/cordis.patch.yml 的内容改成下面这样（原来只有注释和一个空数组 []）
-cat > ~/.dsh/profiles/web/cordis.patch.yml <<'YAML'
-- insert:
-    - id: pet
-      name: dsh-plugin-whale-overlay
-YAML
+# 本地目录同样可以（开发时用这个）
+# dsh plugin --profile web add /path/to/dsh-plugin-whale-overlay
 
-# 3) 验证解析，然后重启
-node -e "console.log(require.resolve('dsh-plugin-whale-overlay/package.json', { paths: [process.env.HOME + '/.dsh/profiles/web'] }))"
-# 输出应为 $PET_HOME/package.json
+# 2) 确认它已成为一层
+node -e "console.log(require('$HOME/.dsh/profiles/web/package.json').dsh.profile.bundles)"
+# 应当能看到 dsh-plugin-whale-overlay 出现在列表里
+
+# 3) 重启：在跑 dsh web 的终端按 Ctrl-C，再执行 dsh web，然后刷新浏览器
 ```
-
-然后重启：在跑 `dsh web` 的那个终端按 `Ctrl-C`，再执行一次 `dsh web`，浏览器刷新页面。
 
 ### 装好之后应该看到
 
@@ -89,19 +88,17 @@ node -e "console.log(require.resolve('dsh-plugin-whale-overlay/package.json', { 
 - 设置里的插件清单（Plugin inventory）中会出现 `dsh-plugin-whale-overlay` 一行；
 - 在浏览器里打开 `http://127.0.0.1:3080/dsh-plugin-whale-overlay/assets/whale_idle.gif` 能直接看到图（用你 GUI 的实际地址，默认端口 3080）。
 
-如果 GUI 起不来，说明第 2 步的 YAML 写错了 —— 见下面的回滚。
+如果 GUI 起不来，用 `dsh --profile web --dump-default-config` 看内置层是否正常，再检查本仓库的 `cordis.patch.yml` 有没有被改坏。
 
-### 卸载 / 回滚
+### 卸载
 
 ```bash
-# 1) 配置文件恢复成空 patch（GUI 立刻恢复正常，不需要动软链）
-cat > ~/.dsh/profiles/web/cordis.patch.yml <<'YAML'
-[]
-YAML
-
-# 2) 删掉软链
-rm -f ~/.dsh/profiles/web/node_modules/dsh-plugin-whale-overlay
+dsh plugin --profile web remove dsh-plugin-whale-overlay
 ```
+
+`remove` 会把它从 `dsh.profile.bundles` 里摘掉，重启后桌宠即消失（`assets` 路由也随之注销）。
+
+> 如果你之前照旧版说明**手改过** profile 的 `~/.dsh/profiles/web/cordis.patch.yml`（在里面手写过一个 `insert` 行），请把那行删掉或把文件恢复成 `[]` —— 有了 bundle 层之后那个手写行是重复的。
 
 桌宠写进 `localStorage` 的位置/形态可以这样清掉：打开浏览器控制台执行
 `localStorage.removeItem('dsh-plugin-whale-overlay:position'); localStorage.removeItem('dsh-plugin-whale-overlay:form')`。
@@ -115,7 +112,7 @@ cd /path/to/dsh-plugin-whale-overlay      # 换成你实际放这个文件夹的
 node tests/plugin-harness.js
 ```
 
-153 条断言（含一组"脱敏守卫"），全部离线，不需要 Electron、不需要浏览器、不需要网络。它做的事不是"跑一遍看有没有报错"，而是**把真实的 bundle 真正跑起来**：
+165 条断言（含一组"脱敏守卫"和一组"bundle manifest / patch 守卫"），全部离线，不需要 Electron、不需要浏览器、不需要网络。它做的事不是"跑一遍看有没有报错"，而是**把真实的 bundle 真正跑起来**：
 
 - 用一个真的 `window.__ModuleLoader__` 接住注册（并像产品那样**延迟**执行 factory，不提前跑副作用）；
 - 一个迷你 React（`useState` / `useRef` / `useCallback` / `useEffect`，含"先渲染后跑 effect"的顺序），所以组件是真的被执行的 —— 戳它、拖它、切换形态、推进时钟，断言渲染结果和 DOM 写入；
